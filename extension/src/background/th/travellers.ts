@@ -4,6 +4,7 @@
  * traveller's answers for the content scripts, written only here. Every change
  * names the traveller it belongs to, so nothing lands on the wrong person.
  */
+import * as store from "../vault";
 import { isAllowed, type Answer } from "../../content/th/fields";
 import { ACTIVE_PROFILE_KEY, DRAFT_KEY, LEARNED_KEY, PROFILES_KEY, type RecordingDraft } from "../../lib/keysTh";
 import { serialize } from "../localStore";
@@ -21,7 +22,7 @@ export interface Traveller {
 }
 
 async function load() {
-  const res = await chrome.storage.local.get([PROFILES_KEY, ACTIVE_PROFILE_KEY]);
+  const res = await store.get([PROFILES_KEY, ACTIVE_PROFILE_KEY]);
   return {
     profiles: (res[PROFILES_KEY] as LocalProfile[] | undefined) ?? [],
     active: res[ACTIVE_PROFILE_KEY] as string | undefined,
@@ -30,7 +31,7 @@ async function load() {
 
 async function save(profiles: LocalProfile[], activeId: string | undefined) {
   const active = profiles.find(p => p.id === activeId);
-  await chrome.storage.local.set({
+  await store.set({
     [PROFILES_KEY]: profiles,
     [ACTIVE_PROFILE_KEY]: active?.id ?? null,
     [LEARNED_KEY]: active?.learned ?? [],
@@ -102,17 +103,17 @@ async function writeAnswers(id: string | undefined, fields: Answer[]) {
   if (!p || !fields.length) return { saved: 0 };
   // Strip the transient flag: an emptied answer is simply removed.
   p.learned = mergeAnswers(p.learned, fields).map(({ cleared: _cleared, ...a }) => a);
-  await chrome.storage.local.set({ [PROFILES_KEY]: profiles, ...(id === active ? { [LEARNED_KEY]: p.learned } : {}) });
+  await store.set({ [PROFILES_KEY]: profiles, ...(id === active ? { [LEARNED_KEY]: p.learned } : {}) });
   return { saved: fields.filter(a => a.value).length, total: p.learned.length, label: p.label };
 }
 
 /** End of a recording. Nothing captured = nothing changes (never wipes answers). */
 export function saveRecording(fields: Answer[]) {
   return serialize(async () => {
-    const res = await chrome.storage.local.get([DRAFT_KEY, ACTIVE_PROFILE_KEY]);
+    const res = await store.get([DRAFT_KEY, ACTIVE_PROFILE_KEY]);
     const draft = res[DRAFT_KEY] as RecordingDraft | undefined;
     const out = await writeAnswers(draft?.travellerId ?? res[ACTIVE_PROFILE_KEY], fields);
-    await chrome.storage.local.remove(DRAFT_KEY); // recording is over, in every tab
+    await store.remove(DRAFT_KEY); // recording is over, in every tab
     return out;
   });
 }

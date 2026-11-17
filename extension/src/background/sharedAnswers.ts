@@ -4,6 +4,7 @@
  * offer and then saves their recording. An offer is only ever made for the traveller
  * being recorded right now, and asked once per traveller per country.
  */
+import * as store from "./vault";
 import { fromIndonesia, fromThailand, indonesiaItems, thailandItems, type Common, type ShareItem } from "../lib/commonAnswers";
 import type { CountryId } from "../lib/countries";
 import { DRAFT_KEY, SHARED_CLOSED_KEY, type RecordingDraft } from "../lib/keys";
@@ -27,7 +28,7 @@ const MAX_OFFERS = 5;
 
 export function offersFor(country: CountryId, travellerId: string) {
   return serialize(async () => {
-    const res = await chrome.storage.local.get([PROFILES_KEY, TH.PROFILES_KEY, DRAFT_KEY, TH.DRAFT_KEY, SHARED_CLOSED_KEY]);
+    const res = await store.get([PROFILES_KEY, TH.PROFILES_KEY, DRAFT_KEY, TH.DRAFT_KEY, SHARED_CLOSED_KEY]);
     const draft = res[country === "th" ? TH.DRAFT_KEY : DRAFT_KEY] as RecordingDraft | undefined;
     if (!draft?.active || draft.travellerId !== travellerId) return { offers: [] as Offer[] };
     if (((res[SHARED_CLOSED_KEY] as string[] | undefined) ?? []).includes(closedId(country, travellerId))) return { offers: [] as Offer[] };
@@ -55,10 +56,10 @@ export function offersFor(country: CountryId, travellerId: string) {
 /** Used or turned down: don't ask again for this traveller on this form. */
 export function closeOffer(country: CountryId, travellerId: string) {
   return serialize(async () => {
-    const res = await chrome.storage.local.get(SHARED_CLOSED_KEY);
+    const res = await store.get(SHARED_CLOSED_KEY);
     const closed = (res[SHARED_CLOSED_KEY] as string[] | undefined) ?? [];
     const id = closedId(country, travellerId);
-    if (!closed.includes(id)) await chrome.storage.local.set({ [SHARED_CLOSED_KEY]: [...closed, id] });
+    if (!closed.includes(id)) await store.set({ [SHARED_CLOSED_KEY]: [...closed, id] });
     return { closed: true };
   });
 }
@@ -66,10 +67,10 @@ export function closeOffer(country: CountryId, travellerId: string) {
 /** The recording was cancelled, so whatever was used wasn't kept: the offer can come back. */
 export function reopenOffer(country: CountryId, travellerId: string) {
   return serialize(async () => {
-    const res = await chrome.storage.local.get(SHARED_CLOSED_KEY);
+    const res = await store.get(SHARED_CLOSED_KEY);
     const closed = (res[SHARED_CLOSED_KEY] as string[] | undefined) ?? [];
     const id = closedId(country, travellerId);
-    if (closed.includes(id)) await chrome.storage.local.set({ [SHARED_CLOSED_KEY]: closed.filter((c) => c !== id) });
+    if (closed.includes(id)) await store.set({ [SHARED_CLOSED_KEY]: closed.filter((c) => c !== id) });
     return { closed: false };
   });
 }

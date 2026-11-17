@@ -15,7 +15,8 @@
  * background, which files them under the traveller id they belong to. Only real
  * user events count (`isTrusted`), so the page's own scripts can't teach it.
  */
-import { DRAFT_KEY, type RecordingDraft } from "../../lib/keysTh";
+import type { RecordingDraft } from "../../lib/keysTh";
+import { getDraft, onSavedChange, updateDraft } from "../../lib/secureClient";
 import { bus, CAPTURE, emit, PERSON_CHANGED, REPLAY_END, REPLAY_START, REPLAYED, SAVE_RECORDING, SAVED } from "../bus";
 import { withDateRules } from "./dates";
 import { clean, isAllowed, isFormPage, keyOf, readAnswer, type Answer } from "./fields";
@@ -118,11 +119,7 @@ function flush() {
   if (!hasStorage || !recording) return;
   reread();
   pending.clear();
-  void chrome.storage.local.get(DRAFT_KEY).then(res => {
-    const draft = res[DRAFT_KEY] as RecordingDraft<Answer> | undefined;
-    if (!draft?.active || !recording) return;
-    return chrome.storage.local.set({ [DRAFT_KEY]: { ...draft, fields: answers() } });
-  }).catch(() => undefined);
+  void updateDraft("th", answers());
 }
 
 function scheduleFlush() {
@@ -262,10 +259,9 @@ bus.addEventListener(SAVE_RECORDING, async () => {
 });
 
 if (hasStorage) {
-  void chrome.storage.local.get(DRAFT_KEY).then(res => applyDraft(res[DRAFT_KEY]));
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "local" && DRAFT_KEY in changes) applyDraft(changes[DRAFT_KEY].newValue);
-  });
+  const sync = () => void getDraft<Answer>("th").then(applyDraft);
+  sync();
+  onSavedChange("th", sync);
 }
 
 if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {

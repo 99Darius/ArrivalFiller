@@ -4,7 +4,8 @@
   "version": "1.1.0",
   "description": "Fills Indonesia's and Thailand's arrival cards from answers you gave once. You check every field and submit. Unofficial.",
   "permissions": [
-    "storage"
+    "storage",
+    "activeTab"
   ],
   "host_permissions": [
     "https://allindonesia.imigrasi.go.id/*",

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mountFillButton } from "./fillButton";
 import { DRAFT_KEY, LEARNED_KEY } from "../lib/keys";
 import { bus, SAVE_RECORDING } from "./bus";
+import { answered, revChange, withBackground } from "../test/fakeBackground";
 
 let root: ShadowRoot;
 let onChanged: (changes: Record<string, { newValue?: unknown }>, area: string) => void;
@@ -16,19 +17,22 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
-function install(store: Record<string, unknown>) {
-  (globalThis as any).chrome = { storage: {
+let store: Record<string, unknown>;
+function install(initial: Record<string, unknown>) {
+  store = initial;
+  (globalThis as any).chrome = withBackground({ storage: {
     local: { get: async () => store },
     onChanged: { addListener: (fn: typeof onChanged) => { onChanged = fn; } },
-  } };
+  } });
 }
 
 describe("floating panel", () => {
   it("shows live labels/answers while learning and can save or minimize", async () => {
     install({ [DRAFT_KEY]: { active: true, fields: [] } });
-    mountFillButton(); await Promise.resolve();
+    mountFillButton(); await answered();
     expect(root.textContent).toContain("Remembering 0 fields");
-    onChanged({ [DRAFT_KEY]: { newValue: { active: true, fields: [{ selector: "#permit", label: "KITAS number", control: "text", value: "TEST-123", step: location.pathname }] } } }, "local");
+    store[DRAFT_KEY] = { active: true, fields: [{ selector: "#permit", label: "KITAS number", control: "text", value: "TEST-123", step: location.pathname }] };
+    onChanged(revChange("id"), "local"); await answered();
     expect(root.querySelector("li")?.textContent).toBe("KITAS numberTEST-123");
     expect(root.querySelector(".note")?.textContent).toContain("captured");
     const save = vi.fn(); bus.addEventListener(SAVE_RECORDING, save, { once: true });
@@ -42,7 +46,7 @@ describe("floating panel", () => {
   it("offers defaults on pages with no prior recorded fields and updates across routes", async () => {
     install({ [LEARNED_KEY]: [{ selector: "#name", control: "text", value: "TEST", step: "/arrival-card-submission/personal-information" }] });
     document.body.innerHTML = '<input id="std_arrival_date_foreigner_individual" readonly value="Select"><input id="std_departure_date_foreigner_individual">';
-    mountFillButton(); await Promise.resolve();
+    mountFillButton(); await answered();
     expect(root.querySelector("h2")?.textContent).toBe("I see 2 fields; I can fill 2");
     expect(root.textContent).toContain("14 days");
     history.replaceState({}, "", "/arrival-card-submission/declaration");
@@ -62,12 +66,12 @@ describe("review ask", () => {
     const { REPLAYED, emit } = await import("./bus");
     const { mountFillButton } = await import("./fillButton");
     const store: Record<string, unknown> = { [LEARNED_KEY]: [], [REVIEW_KEY]: { fills: 2, asks: 0, nextAt: 3, stopped: false } };
-    (globalThis as any).chrome = { storage: {
+    (globalThis as any).chrome = withBackground({ storage: {
       local: { get: async () => store, set: async (o: Record<string, unknown>) => Object.assign(store, o) },
       onChanged: { addListener: () => {} },
-    } };
+    } });
     history.replaceState({}, "", "/arrival-card-submission/declaration");
-    mountFillButton(); await Promise.resolve();
+    mountFillButton(); await answered();
     emit(REPLAYED); emit(REPLAYED); await vi.advanceTimersByTimeAsync(1);
     expect((store[REVIEW_KEY] as { fills: number }).fills).toBe(3);
     const box = root.querySelector<HTMLElement>(".review")!;

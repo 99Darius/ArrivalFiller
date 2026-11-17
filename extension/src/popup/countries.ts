@@ -3,11 +3,16 @@ import type { CountryId } from "../lib/countries";
 import { DRAFT_KEY, OPEN_FORM_KEY } from "../lib/keys";
 import { DRAFT_KEY as TH_DRAFT_KEY } from "../lib/keysTh";
 import type { Ad } from "../ui/ads";
+import { fillSite, officialSite } from "../lib/officialSites";
 
 export interface Country {
   id: CountryId;
   name: string;
   draftKey: string;
+  /** The official government site, shown to warn people away from lookalikes. */
+  officialHost: string;
+  /** ArrivalFiller's website guide to spotting fake versions of this country's site. */
+  fakeSitesGuide: string;
   site: RegExp;
   form: RegExp;
   /** What one Fill covers. */
@@ -32,6 +37,8 @@ export const INDONESIA: Country = {
   id: "id",
   name: "Indonesia",
   draftKey: DRAFT_KEY,
+  officialHost: fillSite("id").host,
+  fakeSitesGuide: "https://arrivalfiller.vercel.app/indonesia/all-indonesia-fake-websites",
   site: /^https:\/\/allindonesia\.imigrasi\.go\.id\//,
   form: /^https:\/\/allindonesia\.imigrasi\.go\.id\/arrival-card-submission\//,
   unit: "page",
@@ -54,6 +61,8 @@ export const THAILAND: Country = {
   id: "th",
   name: "Thailand",
   draftKey: TH_DRAFT_KEY,
+  officialHost: fillSite("th").host,
+  fakeSitesGuide: "https://arrivalfiller.vercel.app/thailand/tdac-fake-websites",
   site: /^https:\/\/tdac\.immigration\.go\.th\//,
   form: /^https:\/\/tdac\.immigration\.go\.th\/arrival-card\/#\/tac\/arrival-card\/add(?!\/submitted)(\/|\?|$)/,
   unit: "step",
@@ -72,3 +81,8 @@ export const THAILAND: Country = {
 };
 
 export const COUNTRIES = [INDONESIA, THAILAND];
+
+/** True only on one of the official arrival card sites (see lib/officialSites). */
+export function isOfficialSite(url: string | undefined): boolean {
+  return !!officialSite(url);
+}

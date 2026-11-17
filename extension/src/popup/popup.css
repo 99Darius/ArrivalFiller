@@ -144,3 +144,12 @@ body { margin: 0; }
 .ia-countries button { flex: 1; padding: 6px 0; border: 0; border-radius: 7px; background: none; color: var(--ink); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .ia-countries button.on { background: var(--ink); color: #fff; }
 
+
+/* Not on an official arrival card site: warn before anyone types details elsewhere. */
+.ia-warn { font-size: 12px; line-height: 1.45; color: #6b2a12; background: #fdeee6; border: 1px solid #f0c3ab; border-radius: 8px; padding: 8px 10px; margin: 0 0 12px; }
+.ia-warn b { font-weight: 700; }
+.ia-warn .ia-warn-link { color: inherit; font-size: inherit; padding: 0; text-decoration: underline; }
+
+/* On an official arrival card site. */
+.ia-ok { font-size: 12px; line-height: 1.45; color: #0b4a2e; background: #e6f4ec; border: 1px solid #b7dcc6; border-radius: 8px; padding: 8px 10px; margin: 0 0 12px; }
+.ia-ok b { font-weight: 700; }
