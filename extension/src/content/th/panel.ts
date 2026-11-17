@@ -2,10 +2,12 @@
 import { dateRuleText } from "./dates";
 import { CHECKED, currentStep, HEALTH, isFormPage, LAST, PERSONAL, readAnswer, TRIP, wrapper, type Answer } from "./fields";
 import { fillStep, planForStep } from "./fill";
-import { ACTIVE_PROFILE_KEY, DRAFT_KEY, LEARNED_KEY, PROFILES_KEY, type RecordingDraft } from "../../lib/keysTh";
+import { ACTIVE_PROFILE_KEY, type RecordingDraft } from "../../lib/keysTh";
+import { onSavedChange, panelState } from "../../lib/secureClient";
 import { bus, CAPTURE, emit, PERSON_CHANGED, REPLAYED, SAVE_RECORDING, SAVED } from "../bus";
 import { createOffer, OFFER_STYLE } from "../sharedOffer";
 import { keepClearOf, makeDraggable, releasePanel } from "../dragPanel";
+import { officialNotice, officialSite } from "../../lib/officialSites";
 import { REVEAL_STYLE, revealNewest, type Row } from "../revealNewest";
 
 const STYLE = `
@@ -24,6 +26,7 @@ const STYLE = `
  .action { width: 100%; padding: 9px; background: #C8452D; color: white; font-weight: 700; }
  button:disabled { opacity: .55; cursor: wait; } button:focus-visible { outline: 2px solid #4a6fc0; outline-offset: 2px; }
  .msg { font-size: 12px; margin: 8px 0 0; } .msg:empty { display: none; }
+ .official { font-size: 11.5px; color: #0b4a2e; background: #e6f4ec; border: 1px solid #b7dcc6; border-radius: 7px; padding: 5px 8px; margin: 0 0 8px; } .official:empty { display: none; }
 ${OFFER_STYLE}${REVEAL_STYLE}`;
 
 /** What the panel mustn't cover on the last page: the email, the tick with its words, and every button there. */
@@ -72,7 +75,11 @@ export function mountPanel(): void {
       return { filled: result.filled.length, text: `${result.filled.length} filled from your saved records.${left.length ? ` Fill yourself: ${left.join(", ")}.` : ""} Check them, then keep going.` };
     },
   });
-  header.append(brand, toggle); body.append(title, notes, offer.el, list, action, msg); panel.append(header, body); root.append(style, panel);
+  // Checked here too, not only by Chrome's site list: the notice shows only on the real site.
+  const official = document.createElement("div"); official.className = "official"; official.setAttribute("role", "note");
+  const site = officialSite(location.href);
+  official.textContent = site?.fills === "th" ? `✓ ${officialNotice(site)}` : "";
+  header.append(brand, toggle); body.append(official, title, notes, offer.el, list, action, msg); panel.append(header, body); root.append(style, panel);
 
   makeDraggable(host, header);
 
@@ -175,17 +182,12 @@ export function mountPanel(): void {
     }
     render();
   });
-  void chrome.storage.local.get([LEARNED_KEY, DRAFT_KEY, ACTIVE_PROFILE_KEY, PROFILES_KEY]).then(res => {
-    learned = res[LEARNED_KEY] ?? []; draft = res[DRAFT_KEY]; travellerId = res[ACTIVE_PROFILE_KEY] ?? undefined; profiles = res[PROFILES_KEY] ?? []; render();
+  // Asked of the background, never read from storage: it may be encrypted (locked = nothing to show).
+  const sync = () => void panelState<Answer>("th").then(s => {
+    learned = s.learned; draft = s.draft; travellerId = s.travellerId; profiles = s.travellers; render();
   });
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "local") return;
-    if (LEARNED_KEY in changes) learned = changes[LEARNED_KEY].newValue ?? [];
-    if (ACTIVE_PROFILE_KEY in changes) travellerId = changes[ACTIVE_PROFILE_KEY].newValue ?? undefined;
-    if (DRAFT_KEY in changes) draft = changes[DRAFT_KEY].newValue;
-    if (PROFILES_KEY in changes) profiles = changes[PROFILES_KEY].newValue ?? [];
-    render();
-  });
+  sync();
+  onSavedChange("th", sync, [ACTIVE_PROFILE_KEY]);
   // The steps and the site's routes change without a page load.
   window.setInterval(() => {
     if (hash !== location.hash) { hash = location.hash; msg.textContent = ""; savedNote = null; collapsed = false; }

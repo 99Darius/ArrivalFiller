@@ -14,7 +14,11 @@ import { AdFooter } from "../ui/AdFooter";
 import { ConsentGate } from "../ui/ConsentGate";
 import type { RecordingDraft } from "../lib/keys";
 import { COUNTRY_KEY, type CountryId } from "../lib/countries";
+import { getDraft } from "../lib/secureClient";
+import { COUNTRY_KEYS } from "../lib/secureKeys";
+import { LockLinks, VaultGate } from "./Lock";
 import { COUNTRIES, INDONESIA, type Country } from "./countries";
+import { officialNotice, pageKind, type OfficialSite, type PageKind } from "../lib/officialSites";
 import "./popup.css";
 
 type Phase = "loading" | "home" | "add" | "recording";
@@ -29,6 +33,36 @@ function Header({ chip, country }: { chip: { label: string; kind?: string }; cou
         <span>{country ?? "arrival card"}</span>
       </div>
       <div className={`ia-chip ${chip.kind ?? ""}`}>Status: {chip.label}</div>
+    </div>
+  );
+}
+
+/** Shown on an official arrival card site, so people know they're in the right place. */
+function Official({ site }: { site: OfficialSite }) {
+  return (
+    <div className="ia-ok" role="note">
+      <b>✓ {officialNotice(site)}.</b> Filling in the {site.card} here is free.
+      {!site.fills && " ArrivalFiller can't fill this card yet, so fill it in yourself."}
+    </div>
+  );
+}
+
+/** Which notice to show: the official site's, or the warning. */
+function SiteNotice({ page, country }: { page: PageKind; country: Country }) {
+  if (page.kind === "official") return <Official site={page.site} />;
+  if (page.kind === "website") return <NotOfficial country={country} />;
+  return null; // Chrome's own pages (chrome://extensions, new tab…): not a website, no notice
+}
+
+/** Shown when the popup is opened anywhere but an official arrival card site. */
+function NotOfficial({ country }: { country: Country }) {
+  return (
+    <div className="ia-warn" role="note">
+      <b>This isn't the official arrival card site.</b> {country.name}'s arrival card is free, and only at{" "}
+      <b>{country.officialHost}</b>. Don't enter passport details on other sites.{" "}
+      <button className="ia-link ia-warn-link" onClick={() => void chrome.tabs.create({ url: country.fakeSitesGuide })}>
+        How to spot a fake site
+      </button>
     </div>
   );
 }
@@ -54,6 +88,8 @@ function Main({ country, picker }: { country: Country; picker: JSX.Element }) {
   const [status, setStatus] = useState("");
   const [onForm, setOnForm] = useState(true);
   const [onSite, setOnSite] = useState(true);
+  // No notice until the tab's address has been checked.
+  const [page, setPage] = useState<PageKind>({ kind: "browser" });
   const [filling, setFilling] = useState(false);
 
   const active = travellers.find((t) => t.id === activeId);
@@ -73,6 +109,7 @@ function Main({ country, picker }: { country: Country; picker: JSX.Element }) {
       if (!cancelled) {
         setOnForm(!!tab?.url && country.form.test(tab.url));
         setOnSite(!!tab?.url && country.site.test(tab.url));
+        setPage(pageKind(tab?.url));
       }
       const res = await send({ type: "GET_TRAVELLERS" });
       if (cancelled) return;
@@ -88,16 +125,17 @@ function Main({ country, picker }: { country: Country; picker: JSX.Element }) {
         setPhase(list.length ? "home" : "add");
       }
     })();
+    const rev = COUNTRY_KEYS[country.id].rev;
     const onChanged = (changes: { [k: string]: chrome.storage.StorageChange }, area: string) => {
-      const draft = changes[country.draftKey]?.newValue as RecordingDraft | undefined;
-      if (area === "local" && draft?.active) setRecCount(draft.fields?.length ?? 0);
+      if (area !== "local" || !(rev in changes)) return;
+      void readDraft().then((draft) => { if (!cancelled && draft?.active) setRecCount(draft.fields?.length ?? 0); });
     };
     chrome.storage.onChanged.addListener(onChanged);
     return () => { cancelled = true; chrome.storage.onChanged.removeListener(onChanged); };
   }, []);
 
   async function readDraft(): Promise<RecordingDraft | undefined> {
-    return (await chrome.storage.local.get(country.draftKey))[country.draftKey];
+    return getDraft(country.id);
   }
 
   async function activeTab() {
@@ -112,8 +150,7 @@ function Main({ country, picker }: { country: Country; picker: JSX.Element }) {
 
   /** Start learning a traveller's answers. Recorders pick this up in every form tab. */
   async function startLearning(travellerId = activeId) {
-    const draft: RecordingDraft = { active: true, fields: [], travellerId };
-    await chrome.storage.local.set({ [country.draftKey]: draft });
+    await send({ type: "START_RECORDING", travellerId });
     setRecCount(0);
     setStatus("");
     setPhase("recording");
@@ -150,9 +187,8 @@ function Main({ country, picker }: { country: Country; picker: JSX.Element }) {
   }
 
   async function cancelLearning() {
-    const draft = await readDraft();
-    await chrome.storage.local.remove(country.draftKey);
-    if (draft?.travellerId) await send({ type: "REOPEN_SHARED", travellerId: draft.travellerId });
+    const res = await send({ type: "CANCEL_RECORDING" });
+    if (res?.travellerId) await send({ type: "REOPEN_SHARED", travellerId: res.travellerId });
     setPhase(travellers.length ? "home" : "add");
   }
 
@@ -198,6 +234,7 @@ function Main({ country, picker }: { country: Country; picker: JSX.Element }) {
       <div className="ia">
         <Header chip={{ label: "Learning", kind: "rec" }} country={country.name} />
         <div className="ia-body">
+          <SiteNotice page={page} country={country} />
           <h1 className="ia-h1">{active ? `Learning ${active.label}'s answers` : "Learning answers"}</h1>
           <p className="ia-lede">{country.learningHint}</p>
           <div className="ia-panel">
@@ -221,6 +258,7 @@ function Main({ country, picker }: { country: Country; picker: JSX.Element }) {
         <Header chip={{ label: "Setup" }} country={country.name} />
         <div className="ia-body">
           {picker}
+          <SiteNotice page={page} country={country} />
           <h1 className="ia-h1">{first ? `Fill ${country.name}'s card once` : "Add a traveller"}</h1>
           <p className="ia-lede">
             {first
@@ -260,6 +298,7 @@ function Main({ country, picker }: { country: Country; picker: JSX.Element }) {
       <Header chip={ready ? { label: "Ready", kind: "ready" } : { label: "Setup" }} country={country.name} />
       <div className="ia-body">
         {picker}
+        <SiteNotice page={page} country={country} />
         <h1 className="ia-h1">Who's travelling?</h1>
         <div className="ia-people" role="radiogroup" aria-label="Traveller">
           {travellers.map((t) => (
@@ -295,6 +334,7 @@ function Main({ country, picker }: { country: Country; picker: JSX.Element }) {
           {ready ? <button className="ia-link" onClick={() => startLearning()}>Teach {active?.label} more</button> : <span />}
           <button className="ia-link" onClick={eraseAll}>Erase all data</button>
         </div>
+        <div className="ia-row ia-foot"><LockLinks /></div>
       </div>
       {ad}
     </div>
@@ -308,9 +348,9 @@ function Countries() {
   useEffect(() => {
     (async () => {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const keys = [COUNTRY_KEY, ...COUNTRIES.map((c) => c.draftKey)];
-      const saved = await chrome.storage.local.get(keys);
-      const recording = COUNTRIES.filter((c) => (saved[c.draftKey] as RecordingDraft | undefined)?.active);
+      const saved = await chrome.storage.local.get(COUNTRY_KEY);
+      const drafts = await Promise.all(COUNTRIES.map((c) => getDraft(c.id)));
+      const recording = COUNTRIES.filter((_, i) => drafts[i]?.active);
       const fromTab = COUNTRIES.find((c) => !!tab?.url && c.site.test(tab.url));
       const picked = COUNTRIES.find((c) => c.id === saved[COUNTRY_KEY]);
       setCountry(recording.find((c) => c === fromTab) ?? recording[0] ?? fromTab ?? picked ?? INDONESIA);
@@ -332,7 +372,9 @@ function Countries() {
 export function App() {
   return (
     <ConsentGate>
-      <Countries />
+      <VaultGate>
+        <Countries />
+      </VaultGate>
     </ConsentGate>
   );
 }

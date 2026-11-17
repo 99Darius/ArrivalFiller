@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LEARNED_KEY } from "../../lib/keysTh";
+import { withBackground } from "../../test/fakeBackground";
 
 let root: ShadowRoot;
 beforeEach(() => {
@@ -13,7 +14,7 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 async function mount(store: Record<string, unknown>) {
-  (globalThis as any).chrome = { storage: { local: { get: async () => store }, onChanged: { addListener: () => {} } } };
+  (globalThis as any).chrome = withBackground({ storage: { local: { get: async () => store }, onChanged: { addListener: () => {} } } });
   const { mountPanel } = await import("./panel");
   mountPanel(); await vi.advanceTimersByTimeAsync(1);
 }
@@ -26,6 +27,8 @@ describe("floating panel", () => {
     await mount({ [LEARNED_KEY]: [name] });
     expect(root.querySelector("h2")?.textContent).toBe("I can fill 1 field on this step");
     expect(root.querySelector(".action")?.textContent).toBe("Fill this step (1)");
+    // Not the real site (the test page is localhost): no "official" notice.
+    expect(root.querySelector(".official")?.textContent).toBe("");
     // Page scripts cannot read the private answers through the host.
     expect(document.querySelector("#thaiarrival-panel")?.shadowRoot).toBeNull();
   });

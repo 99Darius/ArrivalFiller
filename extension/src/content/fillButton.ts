@@ -3,13 +3,15 @@ import fieldMapJson from "../../../config/field-maps/allindonesia.v1.json";
 import { isReplayable, replayLearned, type FieldMap, type LearnedField } from "./formFill";
 import { controls, describeField, fieldKey, findField } from "./formFields";
 import { dateRuleText, isFormPage, pageNotes, planForPage, rememberable } from "./tripDefaults";
-import { ACTIVE_PROFILE_KEY, DRAFT_KEY, LEARNED_KEY, REVIEW_KEY, type RecordingDraft } from "../lib/keys";
+import { ACTIVE_PROFILE_KEY, REVIEW_KEY, type RecordingDraft } from "../lib/keys";
+import { onSavedChange, panelState } from "../lib/secureClient";
 import { countFill, isLastPage, offerNever, REVIEW_URL, type ReviewState } from "./reviewAsk";
 import { bus, CAPTURE, emit, REPLAYED, SAVE_RECORDING, SAVED } from "./bus";
 import { createOffer, OFFER_STYLE } from "./sharedOffer";
 import { makeDraggable } from "./dragPanel";
 import { REVEAL_STYLE, revealNewest, type Row } from "./revealNewest";
 import { INDONESIA_FIRST_PAGE } from "../lib/commonAnswers";
+import { officialNotice, officialSite } from "../lib/officialSites";
 
 const STYLE = `
  :host { all: initial; position: fixed; right: 18px; top: 12px; z-index: 2147483647;
@@ -27,6 +29,7 @@ const STYLE = `
  .action { width: 100%; padding: 9px; background: #C8452D; color: white; font-weight: 700; }
  button:disabled { opacity: .55; cursor: wait; } button:focus-visible { outline: 2px solid #339b7b; outline-offset: 2px; }
  .msg { font-size: 12px; margin: 8px 0 0; } .msg:empty { display: none; }
+ .official { font-size: 11.5px; color: #0b4a2e; background: #e6f4ec; border: 1px solid #b7dcc6; border-radius: 7px; padding: 5px 8px; margin: 0 0 8px; } .official:empty { display: none; }
  .review { margin-top: 10px; padding: 10px; border-radius: 9px; background: #e6f2ed; } .review p { margin: 0 0 8px; }
  .review .row { display: flex; flex-wrap: wrap; gap: 6px; } .review a, .review button { padding: 6px 10px; font-size: 12px; }
  .review a { background: #0E3A34; color: white; border-radius: 7px; text-decoration: none; font-weight: 700; }
@@ -67,7 +70,11 @@ export function mountFillButton(): void {
       return { filled: result.filled.length, text: `${result.filled.length} filled from your saved records.${left.length ? ` Fill yourself: ${left.join(", ")}.` : ""} Check them, then keep going.` };
     },
   });
-  header.append(brand, toggle); body.append(title, notes, offer.el, list, action, msg, review); panel.append(header, body); root.append(style, panel);
+  // Checked here too, not only by Chrome's site list: the notice shows only on the real site.
+  const official = document.createElement("div"); official.className = "official"; official.setAttribute("role", "note");
+  const site = officialSite(location.href);
+  official.textContent = site?.fills === "id" ? `✓ ${officialNotice(site)}` : "";
+  header.append(brand, toggle); body.append(official, title, notes, offer.el, list, action, msg, review); panel.append(header, body); root.append(style, panel);
 
   makeDraggable(host, header);
 
@@ -190,16 +197,12 @@ export function mountFillButton(): void {
     }
     render();
   });
-  void chrome.storage.local.get([LEARNED_KEY, DRAFT_KEY, ACTIVE_PROFILE_KEY]).then(res => {
-    learned = res[LEARNED_KEY] ?? []; draft = res[DRAFT_KEY]; travellerId = res[ACTIVE_PROFILE_KEY] ?? undefined; render();
+  // Asked of the background, never read from storage: it may be encrypted (locked = nothing to show).
+  const sync = () => void panelState<LearnedField>("id").then(s => {
+    learned = s.learned; draft = s.draft; travellerId = s.travellerId; render();
   });
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "local") return;
-    if (LEARNED_KEY in changes) learned = changes[LEARNED_KEY].newValue ?? [];
-    if (ACTIVE_PROFILE_KEY in changes) travellerId = changes[ACTIVE_PROFILE_KEY].newValue ?? undefined;
-    if (DRAFT_KEY in changes) draft = changes[DRAFT_KEY].newValue;
-    render();
-  });
+  sync();
+  onSavedChange("id", sync, [ACTIVE_PROFILE_KEY]);
   // Routes, conditional controls and lazy dropdowns can change without navigation.
   window.setInterval(() => {
     if (path !== location.pathname) { path = location.pathname; msg.textContent = ""; savedNote = null; collapsed = false; counted = false; review.hidden = true; }

@@ -4,7 +4,10 @@
  * Each country has its own travellers: messages say `country: "th"` for Thailand,
  * and anything else is Indonesia. Nothing is sent off the device.
  */
-import { wipeAll } from "./localStore";
+import { serialize, wipeAll } from "./localStore";
+import * as vault from "./vault";
+import { cancelRecording, getDraft, panelState, startRecording, updateDraft } from "./recording";
+import { asCountry } from "../lib/secureKeys";
 import * as indonesia from "./travellers";
 import * as thailand from "./th/travellers";
 import { closeOffer, offersFor, reopenOffer } from "./sharedAnswers";
@@ -13,8 +16,13 @@ import { LEARNED_KEY as TH_LEARNED_KEY } from "../lib/keysTh";
 import type { LearnedField } from "../content/formFill";
 import type { Answer } from "../content/th/fields";
 
-async function handle(msg: { type: string; country?: string; [k: string]: unknown }): Promise<unknown> {
+/** Lock settings and erasing only from the extension's own pages (the popup), never from a content script. */
+const POPUP_ONLY = new Set(["VAULT_STATUS", "VAULT_ENABLE", "VAULT_UNLOCK", "VAULT_LOCK", "VAULT_DISABLE", "WIPE_DATA"]);
+
+async function handle(msg: { type: string; country?: string; [k: string]: unknown }, fromPage: boolean): Promise<unknown> {
+  if (fromPage && POPUP_ONLY.has(msg.type)) return { ok: false, error: "not allowed" };
   const thai = msg.country === "th";
+  const country = asCountry(msg.country);
   const store = thai ? thailand : indonesia;
   switch (msg.type) {
     case "GET_TRAVELLERS":
@@ -33,9 +41,29 @@ async function handle(msg: { type: string; country?: string; [k: string]: unknow
       return { ok: true, ...(thai ? await thailand.learnUpdate(msg.travellerId as string, (msg.fields ?? []) as Answer[]) : await indonesia.learnUpdate(msg.travellerId as string, (msg.fields ?? []) as LearnedField[])) };
     case "GET_LEARNED": {
       const key = thai ? TH_LEARNED_KEY : LEARNED_KEY;
-      const { [key]: learned } = await chrome.storage.local.get(key);
+      const { [key]: learned } = await serialize(() => vault.get(key));
       return { ok: true, learned: learned ?? [] };
     }
+    case "GET_DRAFT":
+      return { ok: true, ...(await getDraft(country)) };
+    case "START_RECORDING":
+      return { ok: true, ...(await startRecording(country, msg.travellerId as string | undefined)) };
+    case "UPDATE_DRAFT":
+      return { ok: true, ...(await updateDraft(country, (msg.fields ?? []) as unknown[])) };
+    case "CANCEL_RECORDING":
+      return { ok: true, ...(await cancelRecording(country)) };
+    case "GET_PANEL":
+      return { ok: true, ...(await panelState(country)) };
+    case "VAULT_STATUS":
+      return { ok: true, ...(await vault.status()) };
+    case "VAULT_ENABLE":
+      return serialize(() => vault.enable(String(msg.secret ?? ""), msg.kind === "pin" ? "pin" : "passphrase"));
+    case "VAULT_UNLOCK":
+      return serialize(() => vault.unlock(String(msg.secret ?? "")));
+    case "VAULT_LOCK":
+      return serialize(() => vault.lock());
+    case "VAULT_DISABLE":
+      return serialize(() => vault.disable(String(msg.secret ?? "")));
     case "GET_SHARED":
       // What the other country has saved that could help the traveller being taught.
       return { ok: true, ...(await offersFor(thai ? "th" : "id", msg.travellerId as string)) };
@@ -50,9 +78,9 @@ async function handle(msg: { type: string; country?: string; [k: string]: unknow
   }
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  handle(msg)
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  handle(msg, !!sender.tab)
     .then(sendResponse)
-    .catch((e) => sendResponse({ ok: false, error: (e as Error).message }));
+    .catch((e) => sendResponse(e instanceof vault.LockedError ? { ok: false, locked: true, error: "locked" } : { ok: false, error: (e as Error).message }));
   return true; // async
 });

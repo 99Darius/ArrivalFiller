@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { shutDownLastLoad } from "../../test/isolate";
+import { answered, revChange, withBackground } from "../../test/fakeBackground";
 
 let store: Record<string, unknown>;
 let sent: { type: string; fields?: { key: string; value: string }[]; travellerId?: string }[];
@@ -11,13 +12,13 @@ async function load(initial: Record<string, unknown> = {}) {
   shutDownLastLoad();
   vi.resetModules();
   store = initial; sent = [];
-  (globalThis as any).chrome = {
+  (globalThis as any).chrome = withBackground({
     storage: {
       local: { get: async () => store, set: async (o: Record<string, unknown>) => Object.assign(store, o) },
       onChanged: { addListener: (fn: typeof storageChanged) => { storageChanged = fn; } },
     },
     runtime: { sendMessage: async (m: (typeof sent)[number]) => { sent.push(m); return { ok: true }; }, onMessage: { addListener: (fn: typeof onMessage) => { onMessage = fn; } } },
-  };
+  });
   const bus = await import("../bus");
   await import("./recorder");
   return bus;
@@ -58,7 +59,7 @@ describe("recording", () => {
 });
 
 describe("recording, whose answers", () => {
-  const setDraft = (draft: unknown) => { store.th_recording_draft = draft; storageChanged({ th_recording_draft: { newValue: draft } }, "local"); };
+  const setDraft = (draft: unknown) => { store.th_recording_draft = draft; storageChanged({ th_recording_draft: { newValue: draft }, ...revChange("th") }, "local"); return answered(); };
   const focus = (id: string) => document.getElementById(id)!.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
   const click = (id: string) => document.getElementById(id)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   const later = (ms = 300) => new Promise(r => setTimeout(r, ms));
@@ -84,8 +85,8 @@ describe("recording, whose answers", () => {
     type("first", "ANN");
     emit(SAVE_RECORDING);
     await later(0);
-    setDraft(undefined);
-    setDraft({ active: true, fields: [], travellerId: "b" });
+    await setDraft(undefined);
+    await setDraft({ active: true, fields: [], travellerId: "b" });
     type("first", "BEA");
     await later();
     expect(drafted()).toEqual([["firstName", "BEA"]]);
@@ -103,7 +104,7 @@ describe("recording, whose answers", () => {
     await load({ th_recording_draft: { active: true, fields: [], travellerId: "a" } });
     await later(0);
     type("first", "ANN");
-    setDraft({ active: true, fields: [], travellerId: "b" });
+    await setDraft({ active: true, fields: [], travellerId: "b" });
     expect((await flushed()).fields).toEqual([]);
   });
 
@@ -121,7 +122,7 @@ describe("recording, whose answers", () => {
     await load({ th_recording_draft: { active: true, travellerId: "a", fields: [{ key: "visaNo", kind: "text", value: "OLD" }, { key: "firstName", kind: "text", value: "OLD" }] } });
     await later(0);
     type("first", "MINE");
-    setDraft({ active: true, travellerId: "a", fields: [{ key: "visaNo", kind: "text", value: "NEWER" }, { key: "firstName", kind: "text", value: "THEIRS" }] });
+    await setDraft({ active: true, travellerId: "a", fields: [{ key: "visaNo", kind: "text", value: "NEWER" }, { key: "firstName", kind: "text", value: "THEIRS" }] });
     expect((await flushed()).fields.map(f => [f.key, f.value]).sort()).toEqual([["firstName", "MINE"], ["visaNo", "NEWER"]]);
   });
 
@@ -130,7 +131,7 @@ describe("recording, whose answers", () => {
     await later(0);
     type("first", "MINE");
     await later();
-    setDraft({ active: true, travellerId: "a", fields: [{ key: "firstName", kind: "text", value: "THEIRS" }] });
+    await setDraft({ active: true, travellerId: "a", fields: [{ key: "firstName", kind: "text", value: "THEIRS" }] });
     type("visa", "V1");
     await later();
     expect(drafted().sort()).toEqual([["firstName", "THEIRS"], ["visaNo", "V1"]]);

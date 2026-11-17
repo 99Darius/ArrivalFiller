@@ -9,6 +9,7 @@
  *   - a learned set saved before profiles existed is attached to the only
  *     profile, or to a new "Me" profile.
  */
+import * as store from "./vault";
 import fieldMapJson from "../../../config/field-maps/allindonesia.v1.json";
 import type { FieldMap, LearnedField } from "../content/formFill";
 import { sameChoice } from "../lib/choice";
@@ -46,7 +47,7 @@ function merge(learned: LearnedField[], extra: LearnedField[]): LearnedField[] {
 }
 
 async function load() {
-  const res = await chrome.storage.local.get([PROFILES_KEY, LEARNED_KEY, ACTIVE_PROFILE_KEY]);
+  const res = await store.get([PROFILES_KEY, LEARNED_KEY, ACTIVE_PROFILE_KEY]);
   return {
     profiles: (res[PROFILES_KEY] as LocalProfile[] | undefined) ?? [],
     learned: (res[LEARNED_KEY] as LearnedField[] | undefined) ?? [],
@@ -56,7 +57,7 @@ async function load() {
 
 async function save(profiles: LocalProfile[], activeId: string | undefined) {
   const active = profiles.find((p) => p.id === activeId);
-  await chrome.storage.local.set({
+  await store.set({
     [PROFILES_KEY]: profiles,
     [ACTIVE_PROFILE_KEY]: active?.id ?? null,
     [LEARNED_KEY]: active?.learned ?? [],
@@ -146,17 +147,17 @@ async function writeAnswers(id: string | undefined, fields: LearnedField[]) {
   const p = profiles.find((x) => x.id === id);
   if (!p || !fields.length) return { saved: 0 };
   p.learned = mergeAnswers(p.learned ?? [], fields);
-  await chrome.storage.local.set({ [PROFILES_KEY]: profiles, ...(id === active ? { [LEARNED_KEY]: p.learned } : {}) });
+  await store.set({ [PROFILES_KEY]: profiles, ...(id === active ? { [LEARNED_KEY]: p.learned } : {}) });
   return { saved: fields.length, total: p.learned.length, label: p.label as string | undefined };
 }
 
 /** End of a recording. Nothing captured = nothing changes (never wipes answers). */
 export function saveRecording(fields: LearnedField[]) {
   return serialize(async () => {
-    const res = await chrome.storage.local.get([DRAFT_KEY, ACTIVE_PROFILE_KEY]);
+    const res = await store.get([DRAFT_KEY, ACTIVE_PROFILE_KEY]);
     const draft = res[DRAFT_KEY] as RecordingDraft | undefined;
     const out = await writeAnswers(draft?.travellerId ?? res[ACTIVE_PROFILE_KEY], fields);
-    await chrome.storage.local.remove(DRAFT_KEY); // recording is over, in every tab
+    await store.remove(DRAFT_KEY); // recording is over, in every tab
     return out;
   });
 }
