@@ -9,8 +9,10 @@
 // flood can cost visibility (one site lost Google traffic after ~5,600 pages in five days).
 //
 // Guards, each of which sends nothing rather than guessing:
+// - a page already announced at its current lastmod is not resent (date-only lastmod counts as end of day)
+// - --dry-run reads saved state (retries, history) so it previews the real batch, but never writes it
 // - first run looks back 26 hours only; later runs look back to the last success, at most 7 days
-// - over --ceiling pages in a run, or over --weekly-ceiling in 7 days: refuse
+// - over --ceiling pages in a run (new plus held retries),  or over --weekly-ceiling in 7 days: refuse
 // - nearly every page "changed": refuse, the sitemap's lastmod is probably the build time
 // - the live key file doesn't match: refuse, the engines would reject it anyway
 // - a page that isn't a plain 200, renders noindex or canonicalises elsewhere is left out
@@ -67,7 +69,7 @@ export function parseSitemap(xml) {
 }
 
 /** Decides what to announce. Pure, so the guards can be tested without a network. */
-export function selectChanged(pages, { host, since, now, ceiling, weeklyCeiling, sentThisWeek }) {
+export function selectChanged(pages, { host, since, now, ceiling, weeklyCeiling, sentThisWeek, retry = [], seen: done = {} }) {
   const seen = new Set()
   const unique = pages.filter((p) => !seen.has(p.url) && seen.add(p.url))
   const own = unique.filter((p) => {
@@ -82,9 +84,13 @@ export function selectChanged(pages, { host, since, now, ceiling, weeklyCeiling,
   if (!own.length) return { ...stats, urls: [], refuse: `no sitemap URL is on ${host}; check www vs apex` }
 
   // A lastmod over a day ahead is a bug in the sitemap, not a change.
-  const changed = own.filter((p) => p.at > since && p.at <= now + DAY).map((p) => p.url)
+  // A page already announced at this lastmod (or later) is not resent; a bare-date lastmod
+  // counts as end of day, so without this it would match every run until the next day.
+  const changed = own.filter((p) => p.at > since && p.at <= now + DAY && !(done[p.url] >= p.at)).map((p) => p.url)
   stats.changed = changed.length
-  if (changed.length > ceiling) return { ...stats, urls: [], refuse: `${changed.length} changed pages is over the ${ceiling} ceiling` }
+  // The ceiling covers what will really be sent: new pages plus held retries, de-duplicated.
+  const batch = new Set([...changed, ...retry]).size
+  if (batch > ceiling) return { ...stats, urls: [], refuse: `${batch} pages to send (${changed.length} changed plus retries) is over the ${ceiling} ceiling` }
   if (own.length >= MIN_PAGES_FOR_BUILD_TIME_CHECK && changed.length >= own.length * 0.9) {
     return { ...stats, urls: [], refuse: `${changed.length} of ${own.length} pages changed; lastmod looks like the build time` }
   }
@@ -199,21 +205,25 @@ export async function run({ host, key, dryRun, sitemap, ceiling, weeklyCeiling, 
   // Unreadable state fails the run: a wrong "since" could resend or skip pages.
   let state = {}
   try {
-    if (existsSync(statePath) && !dryRun) state = JSON.parse(readFileSync(statePath, "utf8"))
+    if (existsSync(statePath)) state = JSON.parse(readFileSync(statePath, "utf8"))
   } catch {
     return finish("failed", { reason: `state file ${statePath} is unreadable` })
   }
   const mine = state[host] ?? { last: 0, sends: [] }
   const retry = (mine.retry ?? []).filter((r) => r.first > now - MAX_LOOKBACK_MS)
   const sends = mine.sends.filter((s) => s.at > now - 7 * DAY)
+  // url -> lastmod already announced in the last 7 days, so an unchanged page is not resent.
+  const announced = Object.fromEntries(Object.entries(mine.announced ?? {}).filter(([, v]) => v.t > now - 7 * DAY).map(([u, v]) => [u, v]))
   const sentThisWeek = sends.reduce((n, s) => n + s.n, 0)
   const since = mine.last ? Math.max(mine.last, now - MAX_LOOKBACK_MS) : now - FIRST_RUN_MS
-  const save = (sent, held) => {
+  let lastmods = new Map()
+  const save = (sent, held, kept = []) => {
     if (dryRun) return
     const firstHeld = (url) => retry.find((r) => r.url === url)?.first ?? now
     state[host] = {
       last: now,
       sends: sent ? [...sends, { at: now, n: sent }] : sends,
+      announced: { ...announced, ...Object.fromEntries(kept.map((u) => [u, { at: lastmods.get(u) ?? 0, t: now }])) },
       retry: held.map((url) => ({ url, first: firstHeld(url) })),
     }
     writeFileSync(statePath, JSON.stringify(state))
@@ -225,13 +235,17 @@ export async function run({ host, key, dryRun, sitemap, ceiling, weeklyCeiling, 
       const live = res.ok ? (await res.text()).trim() : null
       if (live !== key) return finish("refused", { reason: `key file answered ${res.status} and does not match` })
     }
-    const chosen = selectChanged(await sitemapUrls(host, sitemap), {
+    const pages = await sitemapUrls(host, sitemap)
+    lastmods = new Map(pages.map((p) => [p.url, p.at]))
+    const chosen = selectChanged(pages, {
       host,
       since,
       now,
       ceiling,
       weeklyCeiling,
       sentThisWeek: sentThisWeek + retry.length,
+      retry: retry.map((r) => r.url),
+      seen: Object.fromEntries(Object.entries(announced).map(([u, v]) => [u, v.at])),
     })
     const { urls, refuse, ...stats } = chosen
     Object.assign(out, stats)
@@ -251,7 +265,7 @@ export async function run({ host, key, dryRun, sitemap, ceiling, weeklyCeiling, 
     if (!results.some((r) => r.ok)) {
       return finish("failed", { results })
     }
-    save(kept.length, held)
+    save(kept.length, held, kept)
     return finish("ok", { sent: kept.length, results })
   } catch (e) {
     return finish("failed", { reason: String(e.message ?? e).slice(0, 200) })
